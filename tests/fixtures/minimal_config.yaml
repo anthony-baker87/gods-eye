@@ -1,0 +1,7 @@
+camera:
+  width: 640
+  height: 480
+detection:
+  backend: mock
+  confidence_threshold: 0.6
+

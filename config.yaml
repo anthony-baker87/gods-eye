@@ -1,0 +1,31 @@
+camera:
+  width: 1280
+  height: 720
+  fps: 30
+
+detection:
+  backend: mock
+  confidence_threshold: 0.45
+  person_class_id: 0
+  hailo:
+    model_path: null
+    labels_path: null
+
+tracking:
+  max_lost_frames: 12
+  max_distance: 90
+
+dashboard:
+  enabled: true
+  host: 0.0.0.0
+  port: 8080
+  jpeg_quality: 80
+
+logging:
+  enabled: true
+  path: logs/tracks.jsonl
+
+output:
+  record: false
+  path: output/annotated.mp4
+
