@@ -36,3 +36,20 @@ detection:
 
     with pytest.raises(ValueError, match="camera.source"):
         load_config(config_path)
+
+
+def test_static_gps_requires_coordinates(tmp_path: Path) -> None:
+    config_path = tmp_path / "missing_static_gps.yaml"
+    config_path.write_text(
+        """
+gps:
+  enabled: true
+  provider: static
+detection:
+  backend: mock
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Static GPS"):
+        load_config(config_path)

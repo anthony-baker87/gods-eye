@@ -47,6 +47,17 @@ class DashboardConfig:
 
 
 @dataclass(slots=True)
+class GpsConfig:
+    enabled: bool = False
+    provider: str = "static"
+    latitude: float | None = None
+    longitude: float | None = None
+    altitude_m: float | None = None
+    gpsd_host: str = "127.0.0.1"
+    gpsd_port: int = 2947
+
+
+@dataclass(slots=True)
 class LoggingConfig:
     enabled: bool = True
     path: str = "logs/tracks.jsonl"
@@ -64,6 +75,7 @@ class AppConfig:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    gps: GpsConfig = field(default_factory=GpsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
@@ -95,6 +107,7 @@ def load_config(path: str | Path) -> AppConfig:
     detection_raw = _section(raw, "detection")
     tracking_raw = _section(raw, "tracking")
     dashboard_raw = _section(raw, "dashboard")
+    gps_raw = _section(raw, "gps")
     logging_raw = _section(raw, "logging")
     output_raw = _section(raw, "output")
     hailo_raw = _section(detection_raw, "hailo")
@@ -128,6 +141,15 @@ def load_config(path: str | Path) -> AppConfig:
             host=str(dashboard_raw.get("host", "0.0.0.0")),
             port=int(dashboard_raw.get("port", 8080)),
             jpeg_quality=int(dashboard_raw.get("jpeg_quality", 80)),
+        ),
+        gps=GpsConfig(
+            enabled=bool(gps_raw.get("enabled", False)),
+            provider=str(gps_raw.get("provider", "static")).lower(),
+            latitude=_optional_float(gps_raw.get("latitude")),
+            longitude=_optional_float(gps_raw.get("longitude")),
+            altitude_m=_optional_float(gps_raw.get("altitude_m")),
+            gpsd_host=str(gps_raw.get("gpsd_host", "127.0.0.1")),
+            gpsd_port=int(gps_raw.get("gpsd_port", 2947)),
         ),
         logging=LoggingConfig(
             enabled=bool(logging_raw.get("enabled", True)),
@@ -205,6 +227,12 @@ def _parse_scalar(value: str) -> Any:
         return value
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
 def validate_config(config: AppConfig) -> None:
     if config.camera.width <= 0 or config.camera.height <= 0:
         raise ValueError("Camera width and height must be positive.")
@@ -220,3 +248,14 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("tracking.max_distance must be positive.")
     if not 1 <= config.dashboard.jpeg_quality <= 100:
         raise ValueError("dashboard.jpeg_quality must be between 1 and 100.")
+    if config.gps.provider not in {"static", "gpsd"}:
+        raise ValueError("gps.provider must be one of: static, gpsd.")
+    if config.gps.enabled and config.gps.provider == "static":
+        if config.gps.latitude is None or config.gps.longitude is None:
+            raise ValueError("Static GPS requires gps.latitude and gps.longitude.")
+    if config.gps.latitude is not None and not -90.0 <= config.gps.latitude <= 90.0:
+        raise ValueError("gps.latitude must be between -90 and 90.")
+    if config.gps.longitude is not None and not -180.0 <= config.gps.longitude <= 180.0:
+        raise ValueError("gps.longitude must be between -180 and 180.")
+    if config.gps.gpsd_port <= 0:
+        raise ValueError("gps.gpsd_port must be positive.")

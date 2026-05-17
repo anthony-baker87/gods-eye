@@ -11,6 +11,7 @@ class Track:
     bbox: tuple[int, int, int, int]
     centroid: tuple[float, float]
     confidence: float
+    label: str = "person"
     lost_frames: int = 0
     age: int = 1
 
@@ -59,6 +60,7 @@ class CentroidTracker:
                 bbox=detection.bbox,
                 centroid=_centroid(detection.bbox),
                 confidence=detection.confidence,
+                label=detection.label,
                 lost_frames=0,
                 age=self._tracks[track_id].age + 1,
             )
@@ -80,6 +82,7 @@ class CentroidTracker:
                 bbox=detection.bbox,
                 centroid=_centroid(detection.bbox),
                 confidence=detection.confidence,
+                label=detection.label,
             )
 
         return self.tracks
@@ -90,4 +93,3 @@ class CentroidTracker:
             track.lost_frames += 1
             if track.lost_frames > self.max_lost_frames:
                 del self._tracks[track_id]
-

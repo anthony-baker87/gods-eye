@@ -12,6 +12,7 @@ from src.camera import create_camera
 from src.config import load_config
 from src.dashboard.server import DashboardServer
 from src.detector import create_detector
+from src.gps import create_gps_source
 from src.logger import TrackEventLogger
 from src.overlay import draw_overlay
 from src.tracking import CentroidTracker
@@ -56,6 +57,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, request_stop)
 
     detector = create_detector(config.detection)
+    gps_source = create_gps_source(config.gps)
     tracker = CentroidTracker(
         max_lost_frames=config.tracking.max_lost_frames,
         max_distance=config.tracking.max_distance,
@@ -85,20 +87,37 @@ def main() -> int:
                 detections = detector.detect(camera_frame.frame)
                 stats.inference_ms = (time.perf_counter() - inference_start) * 1000.0
                 tracks = tracker.update(detections)
+                current_location = gps_source.read()
                 stats.mark_frame()
 
                 annotated = draw_overlay(camera_frame.frame, tracks, stats.fps, stats.inference_ms, detector.backend_name)
                 event_logger.log_tracks(camera_frame.frame_number, tracks)
+                active_tracks = [track for track in tracks if track.lost_frames == 0]
+                detection_pins = []
+                if current_location is not None:
+                    detection_pins = [
+                        {
+                            "track_id": track.track_id,
+                            "latitude": current_location.latitude,
+                            "longitude": current_location.longitude,
+                            "altitude_m": current_location.altitude_m,
+                            "confidence": round(track.confidence, 3),
+                            "timestamp": current_location.timestamp,
+                            "source": current_location.source,
+                        }
+                        for track in active_tracks
+                    ]
 
                 status = {
                     "fps": round(stats.fps, 2),
                     "frame_size": [int(camera_frame.frame.shape[1]), int(camera_frame.frame.shape[0])],
-                    "active_track_count": len([track for track in tracks if track.lost_frames == 0]),
+                    "active_track_count": len(active_tracks),
                     "current_detections": [
                         {
                             "track_id": track.track_id,
                             "bbox": list(track.bbox),
                             "confidence": round(track.confidence, 3),
+                            "label": track.label,
                             "lost_frames": track.lost_frames,
                         }
                         for track in tracks
@@ -106,6 +125,8 @@ def main() -> int:
                     "uptime": round(stats.uptime, 2),
                     "detector_backend": detector.backend_name,
                     "frame_number": camera_frame.frame_number,
+                    "gps": None if current_location is None else current_location.as_dict(),
+                    "detection_pins": detection_pins,
                 }
                 if dashboard:
                     dashboard.state.update(annotated, status)
@@ -122,4 +143,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

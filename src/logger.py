@@ -36,7 +36,7 @@ class TrackEventLogger:
                 "track_id": track.track_id,
                 "bbox": track.bbox,
                 "confidence": track.confidence,
+                "label": track.label,
             }
             self._handle.write(json.dumps(event, separators=(",", ":")) + "\n")
         self._handle.flush()
-

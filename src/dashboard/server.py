@@ -32,11 +32,14 @@ def create_app(state: SharedState) -> Flask:
         <html>
           <head>
             <title>Drone Tracker</title>
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
             <style>
               body { margin: 0; background: #101418; color: #eef2f6; font-family: system-ui, sans-serif; }
               header { padding: 14px 18px; background: #171d24; display: flex; justify-content: space-between; }
-              main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px; }
-              img { width: 100%; height: auto; background: #050608; }
+              main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px; }
+              img { width: 100%; height: auto; background: #050608; display: block; }
+              aside { display: grid; gap: 16px; align-content: start; }
+              #map { height: 300px; background: #171d24; border-radius: 6px; overflow: hidden; }
               pre { white-space: pre-wrap; background: #171d24; padding: 12px; border-radius: 6px; }
               @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
             </style>
@@ -45,12 +48,39 @@ def create_app(state: SharedState) -> Flask:
             <header><strong>Drone Tracker</strong><span>Local onboard dashboard</span></header>
             <main>
               <img src="/video.mjpg" alt="Live tracking stream">
-              <pre id="status">Loading...</pre>
+              <aside>
+                <div id="map"></div>
+                <pre id="status">Loading...</pre>
+              </aside>
             </main>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script>
+              const map = L.map('map').setView([0, 0], 2);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+              }).addTo(map);
+              const markers = new Map();
+              let mapCentered = false;
+
               async function refreshStatus() {
                 const response = await fetch('/status.json');
-                document.getElementById('status').textContent = JSON.stringify(await response.json(), null, 2);
+                const status = await response.json();
+                document.getElementById('status').textContent = JSON.stringify(status, null, 2);
+                for (const pin of status.detection_pins || []) {
+                  const key = String(pin.track_id);
+                  const latlng = [pin.latitude, pin.longitude];
+                  const text = `Track ${pin.track_id} | ${Number(pin.confidence).toFixed(2)} | ${pin.source}`;
+                  if (markers.has(key)) {
+                    markers.get(key).setLatLng(latlng).bindPopup(text);
+                  } else {
+                    markers.set(key, L.marker(latlng).addTo(map).bindPopup(text));
+                  }
+                  if (!mapCentered) {
+                    map.setView(latlng, 18);
+                    mapCentered = true;
+                  }
+                }
               }
               setInterval(refreshStatus, 1000);
               refreshStatus();
@@ -100,4 +130,3 @@ class DashboardServer:
             daemon=True,
         )
         self._thread.start()
-

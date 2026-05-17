@@ -98,13 +98,13 @@ python -m src.main --config config.yaml --backend mock --no-dashboard
 
 ## Run With CPU Backend
 
-The CPU backend uses OpenCV HOG person detection. It is included as a development fallback, not as the target real-time path:
+The CPU backend uses OpenCV HOG plus face and upper-body cascades. It is included as a development fallback, not as the target real-time path:
 
 ```bash
 python -m src.main --config config.yaml --backend cpu
 ```
 
-Expect lower accuracy and performance than a modern Hailo model.
+Expect lower accuracy and performance than a modern Hailo model. It works best with good lighting and may detect faces or upper bodies when a full standing person is not visible.
 
 ## Run With Hailo Backend
 
@@ -136,6 +136,7 @@ The current `HailoDetector` is an adapter boundary that verifies the Hailo runti
 - Confidence threshold
 - Tracker maximum lost frames and matching distance
 - Dashboard host, port, and JPEG quality
+- Optional GPS provider for detection map pins: disabled, static test coordinates, or `gpsd`
 - JSONL logging enabled/path
 - Optional annotated video recording path
 
@@ -148,6 +149,7 @@ python -m src.main --config config.yaml --backend mock --record-output --debug
 ## Dashboard Endpoints
 
 - `/` shows MJPEG video with overlays and live status JSON.
+- The dashboard map places a pin for active detections when GPS is enabled.
 - `/video.mjpg` streams annotated frames.
 - `/status.json` returns current status:
 
@@ -157,10 +159,37 @@ python -m src.main --config config.yaml --backend mock --record-output --debug
   "frame_size": [1280, 720],
   "active_track_count": 2,
   "current_detections": [],
+  "gps": null,
+  "detection_pins": [],
   "uptime": 12.4,
   "detector_backend": "mock"
 }
 ```
+
+## GPS Map Pins
+
+GPS is disabled by default. For bench testing, set a static location in a local, untracked Pi config file:
+
+```yaml
+gps:
+  enabled: true
+  provider: static
+  latitude: 34.0522
+  longitude: -118.2437
+  altitude_m: null
+```
+
+For a real GPS receiver exposed through `gpsd`, use:
+
+```yaml
+gps:
+  enabled: true
+  provider: gpsd
+  gpsd_host: 127.0.0.1
+  gpsd_port: 2947
+```
+
+The first implementation pins detections at the current drone/camera GPS position. Estimating the detected person's ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
 
 ## Logging
 

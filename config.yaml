@@ -22,6 +22,15 @@ dashboard:
   port: 8080
   jpeg_quality: 80
 
+gps:
+  enabled: false
+  provider: static
+  latitude: null
+  longitude: null
+  altitude_m: null
+  gpsd_host: 127.0.0.1
+  gpsd_port: 2947
+
 logging:
   enabled: true
   path: logs/tracks.jsonl
