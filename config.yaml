@@ -2,6 +2,7 @@ camera:
   width: 1280
   height: 720
   fps: 30
+  source: auto
 
 detection:
   backend: mock
@@ -28,4 +29,3 @@ logging:
 output:
   record: false
   path: output/annotated.mp4
-

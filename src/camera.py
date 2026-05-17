@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 
@@ -36,6 +38,12 @@ class PiCameraSource:
                 "Picamera2 is not installed. On Raspberry Pi OS, install python3-picamera2 "
                 "or use --backend mock with synthetic camera fallback."
             ) from exc
+        except Exception as exc:
+            raise CameraError(
+                "Picamera2 could not be imported. This often happens when apt-installed "
+                "Picamera2 packages see a pip-installed numpy with an incompatible binary ABI. "
+                "Use camera.source: rpicam, or rebuild the virtualenv with system packages."
+            ) from exc
 
         try:
             self._picam2 = Picamera2()
@@ -66,6 +74,87 @@ class PiCameraSource:
         if self._picam2 is not None:
             self._picam2.stop()
             self._picam2 = None
+
+
+class RpicamCameraSource:
+    """Camera source backed by rpicam-vid MJPEG output."""
+
+    def __init__(self, config: CameraConfig) -> None:
+        self.config = config
+        self._process: subprocess.Popen[bytes] | None = None
+        self._frame_number = 0
+        self._buffer = bytearray()
+
+    def start(self) -> None:
+        executable = shutil.which("rpicam-vid")
+        if executable is None:
+            raise CameraError("rpicam-vid is not installed or not on PATH.")
+
+        command = [
+            executable,
+            "--timeout",
+            "0",
+            "--codec",
+            "mjpeg",
+            "--width",
+            str(self.config.width),
+            "--height",
+            str(self.config.height),
+            "--framerate",
+            str(self.config.fps),
+            "--nopreview",
+            "--output",
+            "-",
+        ]
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except OSError as exc:
+            raise CameraError(f"Unable to start rpicam-vid: {exc}") from exc
+
+    def read(self) -> CameraFrame:
+        if self._process is None or self._process.stdout is None:
+            raise CameraError("rpicam camera has not been started.")
+        while True:
+            end = self._buffer.find(b"\xff\xd9")
+            if end != -1:
+                jpeg = bytes(self._buffer[: end + 2])
+                del self._buffer[: end + 2]
+                start = jpeg.find(b"\xff\xd8")
+                if start > 0:
+                    jpeg = jpeg[start:]
+                frame = self._decode_jpeg(jpeg)
+                self._frame_number += 1
+                return CameraFrame(frame=frame, frame_number=self._frame_number, timestamp=time.time())
+
+            chunk = self._process.stdout.read(4096)
+            if not chunk:
+                raise CameraError("rpicam-vid stopped before a complete frame was received.")
+            self._buffer.extend(chunk)
+
+    def _decode_jpeg(self, jpeg: bytes) -> np.ndarray:
+        import cv2
+
+        encoded = np.frombuffer(jpeg, dtype=np.uint8)
+        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise CameraError("Unable to decode frame from rpicam-vid MJPEG stream.")
+        return frame
+
+    def stop(self) -> None:
+        if self._process is None:
+            return
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=2)
+        self._process = None
 
 
 class SyntheticCameraSource:
@@ -100,16 +189,34 @@ class SyntheticCameraSource:
         self._started = False
 
 
-def create_camera(config: CameraConfig, allow_synthetic: bool = True) -> PiCameraSource | SyntheticCameraSource:
-    camera = PiCameraSource(config)
-    try:
-        camera.start()
-        return camera
-    except CameraError:
-        if not allow_synthetic:
-            raise
-        LOGGER.exception("Real camera unavailable; falling back to synthetic frames.")
+def create_camera(
+    config: CameraConfig,
+    allow_synthetic: bool = True,
+) -> PiCameraSource | RpicamCameraSource | SyntheticCameraSource:
+    source_order = {
+        "auto": [PiCameraSource, RpicamCameraSource],
+        "picamera2": [PiCameraSource],
+        "rpicam": [RpicamCameraSource],
+        "synthetic": [SyntheticCameraSource],
+    }[config.source]
+
+    last_error: CameraError | None = None
+    for source_type in source_order:
+        camera = source_type(config)
+        try:
+            camera.start()
+            LOGGER.info("Using camera source: %s", config.source if config.source != "auto" else source_type.__name__)
+            return camera
+        except CameraError as exc:
+            last_error = exc
+            LOGGER.warning("%s unavailable: %s", source_type.__name__, exc)
+
+    if allow_synthetic:
+        LOGGER.warning("Real camera unavailable; falling back to synthetic frames. Last error: %s", last_error)
         synthetic = SyntheticCameraSource(config)
         synthetic.start()
         return synthetic
 
+    if last_error is not None:
+        raise last_error
+    raise CameraError("No camera sources are configured.")

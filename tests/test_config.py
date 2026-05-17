@@ -20,3 +20,19 @@ def test_load_config_defaults_and_values() -> None:
 def test_invalid_backend_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported detector backend"):
         load_config(FIXTURES / "invalid_backend.yaml")
+
+
+def test_invalid_camera_source_rejected(tmp_path: Path) -> None:
+    config_path = tmp_path / "invalid_camera_source.yaml"
+    config_path.write_text(
+        """
+camera:
+  source: raspicam
+detection:
+  backend: mock
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="camera.source"):
+        load_config(config_path)

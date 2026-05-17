@@ -15,6 +15,7 @@ class CameraConfig:
     width: int = 1280
     height: int = 720
     fps: int = 30
+    source: str = "auto"
 
 
 @dataclass(slots=True)
@@ -107,6 +108,7 @@ def load_config(path: str | Path) -> AppConfig:
             width=int(camera_raw.get("width", 1280)),
             height=int(camera_raw.get("height", 720)),
             fps=int(camera_raw.get("fps", 30)),
+            source=str(camera_raw.get("source", "auto")).lower(),
         ),
         detection=DetectionConfig(
             backend=backend,
@@ -208,6 +210,8 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("Camera width and height must be positive.")
     if config.camera.fps <= 0:
         raise ValueError("Camera FPS must be positive.")
+    if config.camera.source not in {"auto", "picamera2", "rpicam", "synthetic"}:
+        raise ValueError("camera.source must be one of: auto, picamera2, rpicam, synthetic.")
     if not 0.0 <= config.detection.confidence_threshold <= 1.0:
         raise ValueError("Detection confidence_threshold must be between 0 and 1.")
     if config.tracking.max_lost_frames < 0:

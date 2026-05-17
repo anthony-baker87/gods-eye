@@ -1,6 +1,6 @@
 # God's Eye
 
-Python prototype for onboard person detection and tracking on a Raspberry Pi 5 16GB with the Raspberry Pi AI Kit / Hailo-8L accelerator and an IMX708 wide camera. The app captures frames with Picamera2/libcamera, detects people, assigns persistent track IDs, draws overlays, logs track events, and can serve a local MJPEG dashboard.
+Python prototype for onboard person detection and tracking on a Raspberry Pi 5 16GB with the Raspberry Pi AI Kit / Hailo-8L accelerator and an IMX708 wide camera. The app captures frames with Picamera2 or `rpicam-vid`, detects people, assigns persistent track IDs, draws overlays, logs track events, and can serve a local MJPEG dashboard.
 
 The first version is designed to run even away from the hardware by using the `mock` backend and synthetic camera frames. That makes development, dashboard work, and tracker testing possible on a laptop or non-camera Pi.
 
@@ -50,15 +50,17 @@ Update the Pi and enable the camera stack:
 ```bash
 sudo apt update
 sudo apt full-upgrade
-sudo apt install -y python3-pip python3-venv python3-picamera2 libcamera-apps python3-opencv
+sudo apt install -y python3-pip python3-venv python3-picamera2 rpicam-apps python3-opencv
 ```
 
-Check that libcamera sees the IMX708 camera:
+Check that `rpicam` sees the IMX708 camera:
 
 ```bash
-libcamera-hello --list-cameras
-libcamera-hello -t 5000
+rpicam-hello --list-cameras
+rpicam-hello -t 5000
 ```
+
+On older Raspberry Pi OS images, these commands may still be named `libcamera-hello`.
 
 Install the Raspberry Pi AI Kit / Hailo software using Raspberry Pi and Hailo's current official instructions for your OS image. Hailo's older `hailo-rpi5-examples` repository now points developers toward the newer `hailo-apps` infrastructure, while still documenting basic detection pipelines such as `basic_pipelines/detection.py --input rpi`. The exact Hailo Python APIs and example pipelines change over time, so this repo keeps the hardware adapter isolated in `src/detector/hailo_detector.py`.
 
@@ -129,6 +131,7 @@ The current `HailoDetector` is an adapter boundary that verifies the Hailo runti
 `config.yaml` controls:
 
 - Camera width, height, and FPS
+- Camera source: `auto`, `picamera2`, `rpicam`, or `synthetic`
 - Detector backend: `hailo`, `cpu`, or `mock`
 - Confidence threshold
 - Tracker maximum lost frames and matching distance
@@ -171,7 +174,8 @@ Only live, matched tracks are logged each frame. Lost tracks are retained intern
 
 ## Troubleshooting Camera Issues
 
-- Run `libcamera-hello --list-cameras` to confirm the IMX708 is detected.
+- Run `rpicam-hello --list-cameras` to confirm the IMX708 is detected.
+- Set `camera.source: rpicam` in `config.yaml` if Picamera2 is unavailable but `rpicam-hello` works.
 - Confirm the ribbon cable orientation and seating.
 - Use a recent Raspberry Pi OS 64-bit image.
 - Ensure no other process is using the camera.
