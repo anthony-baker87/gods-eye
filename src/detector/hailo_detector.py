@@ -50,7 +50,7 @@ class HailoDetector:
 
 
 class CpuDetector:
-    """CPU fallback using OpenCV person, upper-body, and face detectors."""
+    """CPU fallback using OpenCV full-person and face detectors."""
 
     backend_name = "cpu"
 
@@ -63,7 +63,6 @@ class CpuDetector:
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         cascade_dir = Path(cv2.data.haarcascades)
         self._face = cv2.CascadeClassifier(str(cascade_dir / "haarcascade_frontalface_default.xml"))
-        self._upper_body = cv2.CascadeClassifier(str(cascade_dir / "haarcascade_upperbody.xml"))
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         cv2 = self._cv2
@@ -72,8 +71,7 @@ class CpuDetector:
         detections: list[Detection] = []
 
         detections.extend(self._detect_hog(frame))
-        detections.extend(self._detect_cascade(gray, self._upper_body, confidence=0.65, label="upper_body"))
-        detections.extend(self._detect_cascade(gray, self._face, confidence=0.85, label="face"))
+        detections.extend(self._detect_cascade(gray, self._face, confidence=0.85))
 
         detections = [detection for detection in detections if detection.confidence >= self.confidence_threshold]
         return _non_max_suppression(detections, iou_threshold=0.35)
@@ -85,7 +83,7 @@ class CpuDetector:
             confidence = float(max(0.0, min(1.0, weight)))
             if confidence >= self.confidence_threshold:
                 detections.append(
-                    Detection(bbox=(int(x), int(y), int(x + w), int(y + h)), confidence=confidence, label="person")
+                    Detection(bbox=(int(x), int(y), int(x + w), int(y + h)), confidence=confidence, label="human")
                 )
         return detections
 
@@ -94,13 +92,12 @@ class CpuDetector:
         gray: np.ndarray,
         cascade: Any,
         confidence: float,
-        label: str,
     ) -> list[Detection]:
         if cascade.empty():
             return []
         rects = cascade.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=5, minSize=(48, 48))
         return [
-            Detection(bbox=(int(x), int(y), int(x + w), int(y + h)), confidence=confidence, label=label)
+            Detection(bbox=(int(x), int(y), int(x + w), int(y + h)), confidence=confidence, label="human")
             for (x, y, w, h) in rects
         ]
 

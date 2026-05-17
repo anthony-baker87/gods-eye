@@ -89,10 +89,17 @@ def main() -> int:
                 tracks = tracker.update(detections)
                 current_location = gps_source.read()
                 stats.mark_frame()
-
-                annotated = draw_overlay(camera_frame.frame, tracks, stats.fps, stats.inference_ms, detector.backend_name)
-                event_logger.log_tracks(camera_frame.frame_number, tracks)
                 active_tracks = [track for track in tracks if track.lost_frames == 0]
+                active_human_tracks = [track for track in active_tracks if track.label == "human"]
+
+                annotated = draw_overlay(
+                    camera_frame.frame,
+                    active_human_tracks,
+                    stats.fps,
+                    stats.inference_ms,
+                    detector.backend_name,
+                )
+                event_logger.log_tracks(camera_frame.frame_number, tracks)
                 detection_pins = []
                 if current_location is not None:
                     detection_pins = [
@@ -102,16 +109,17 @@ def main() -> int:
                             "longitude": current_location.longitude,
                             "altitude_m": current_location.altitude_m,
                             "confidence": round(track.confidence, 3),
+                            "label": track.label,
                             "timestamp": current_location.timestamp,
                             "source": current_location.source,
                         }
-                        for track in active_tracks
+                        for track in active_human_tracks
                     ]
 
                 status = {
                     "fps": round(stats.fps, 2),
                     "frame_size": [int(camera_frame.frame.shape[1]), int(camera_frame.frame.shape[0])],
-                    "active_track_count": len(active_tracks),
+                    "active_track_count": len(active_human_tracks),
                     "current_detections": [
                         {
                             "track_id": track.track_id,
@@ -120,7 +128,7 @@ def main() -> int:
                             "label": track.label,
                             "lost_frames": track.lost_frames,
                         }
-                        for track in tracks
+                        for track in active_human_tracks
                     ],
                     "uptime": round(stats.uptime, 2),
                     "detector_backend": detector.backend_name,

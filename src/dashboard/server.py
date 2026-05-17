@@ -67,18 +67,32 @@ def create_app(state: SharedState) -> Flask:
                 const response = await fetch('/status.json');
                 const status = await response.json();
                 document.getElementById('status').textContent = JSON.stringify(status, null, 2);
+                const activeKeys = new Set();
                 for (const pin of status.detection_pins || []) {
                   const key = String(pin.track_id);
+                  activeKeys.add(key);
                   const latlng = [pin.latitude, pin.longitude];
-                  const text = `Track ${pin.track_id} | ${Number(pin.confidence).toFixed(2)} | ${pin.source}`;
+                  const text = `Human ${pin.track_id} | ${Number(pin.confidence).toFixed(2)} | ${pin.source}`;
                   if (markers.has(key)) {
                     markers.get(key).setLatLng(latlng).bindPopup(text);
                   } else {
-                    markers.set(key, L.marker(latlng).addTo(map).bindPopup(text));
+                    markers.set(key, L.circleMarker(latlng, {
+                      radius: 9,
+                      color: '#16a34a',
+                      weight: 3,
+                      fillColor: '#22c55e',
+                      fillOpacity: 0.8
+                    }).addTo(map).bindPopup(text));
                   }
                   if (!mapCentered) {
-                    map.setView(latlng, 18);
+                    map.setView(latlng, 16);
                     mapCentered = true;
+                  }
+                }
+                for (const [key, marker] of markers) {
+                  if (!activeKeys.has(key)) {
+                    map.removeLayer(marker);
+                    markers.delete(key);
                   }
                 }
               }
