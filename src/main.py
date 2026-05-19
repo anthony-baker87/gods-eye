@@ -91,6 +91,8 @@ def main() -> int:
     pin_ttl_seconds = 60.0
     pin_min_track_age = 3
     recent_detection_pins: dict[int, dict[str, object]] = {}
+    manual_pins: list[dict[str, object]] = []
+    next_manual_pin_id = 1
 
     try:
         with TrackEventLogger(config.logging.enabled, config.logging.path) as event_logger:
@@ -140,18 +142,52 @@ def main() -> int:
                     for track in active_human_tracks:
                         if track.hits < pin_min_track_age:
                             continue
+                        previous_pin = recent_detection_pins.get(track.track_id, {})
+                        snapshot_paths = snapshot_paths_by_track.get(track.track_id) or previous_pin.get("snapshot")
                         recent_detection_pins[track.track_id] = {
                             "track_id": track.track_id,
                             "latitude": current_location.latitude,
                             "longitude": current_location.longitude,
                             "altitude_m": current_location.altitude_m,
                             "confidence": round(track.smoothed_confidence, 3),
-                            "label": track.label,
+                            "label": f"Human track {track.track_id}",
                             "timestamp": current_location.timestamp,
                             "last_seen": time.time(),
                             "source": current_location.source,
-                            "snapshot": snapshot_paths_by_track.get(track.track_id),
+                            "snapshot": snapshot_paths,
                         }
+                if dashboard and current_location is not None:
+                    for click in dashboard.state.drain_camera_clicks():
+                        x_ratio = float(click.get("x_ratio", 0.0))
+                        y_ratio = float(click.get("y_ratio", 0.0))
+                        pixel = (
+                            int(max(0.0, min(1.0, x_ratio)) * (camera_frame.frame.shape[1] - 1)),
+                            int(max(0.0, min(1.0, y_ratio)) * (camera_frame.frame.shape[0] - 1)),
+                        )
+                        pin_id = next_manual_pin_id
+                        next_manual_pin_id += 1
+                        snapshot_paths = snapshot_writer.save_manual_click(
+                            camera_frame.frame,
+                            camera_frame.frame_number,
+                            pixel,
+                            {
+                                "gps": current_location.as_dict(),
+                                "event": "manual_camera_click",
+                            },
+                        )
+                        manual_pins.append(
+                            {
+                                "pin_id": pin_id,
+                                "latitude": current_location.latitude,
+                                "longitude": current_location.longitude,
+                                "altitude_m": current_location.altitude_m,
+                                "label": f"Manual camera click {pin_id}",
+                                "timestamp": time.time(),
+                                "source": current_location.source,
+                                "pixel": [pixel[0], pixel[1]],
+                                "snapshot": snapshot_paths,
+                            }
+                        )
                 cutoff = time.time() - pin_ttl_seconds
                 recent_detection_pins = {
                     track_id: pin
@@ -182,6 +218,7 @@ def main() -> int:
                     "frame_number": camera_frame.frame_number,
                     "gps": None if current_location is None else current_location.as_dict(),
                     "detection_pins": detection_pins,
+                    "manual_pins": manual_pins,
                 }
                 if dashboard:
                     dashboard.state.update(annotated, status)

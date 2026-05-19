@@ -213,7 +213,9 @@ python -m src.main --config config.yaml --backend mock --record-output --debug
 ## Dashboard Endpoints
 
 - `/` shows MJPEG video with overlays and live status JSON.
+- Click the camera video to drop a manual map pin at the current GPS location. The pin stores the clicked image pixel, timestamp, and snapshot.
 - The dashboard map places a "last seen" pin when a human is detected and GPS is enabled.
+- Click a detection or manual pin to show its timestamp, source, confidence when available, and snapshot when available.
 - `/video.mjpg` streams annotated frames.
 - `/status.json` returns current status:
 
@@ -225,6 +227,7 @@ python -m src.main --config config.yaml --backend mock --record-output --debug
   "current_detections": [],
   "gps": null,
   "detection_pins": [],
+  "manual_pins": [],
   "uptime": 12.4,
   "detector_backend": "mock"
 }
@@ -278,6 +281,8 @@ cgps
 ```
 
 When a human track is detected for several consecutive frames, the dashboard pins the current drone/camera GPS position and keeps that "last seen" pin for 60 seconds after the last matching detection. Estimating the detected person's actual ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
+
+Manual camera-click pins use the same current drone/camera GPS position. They are useful for marking what the operator saw in the camera view, but they are not yet projected to the clicked object's ground coordinate.
 
 ## Detection Quality Controls
 

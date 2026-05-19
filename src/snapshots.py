@@ -74,6 +74,54 @@ class SnapshotWriter:
             "metadata_path": str(metadata_path),
         }
 
+    def save_manual_click(
+        self,
+        frame: np.ndarray,
+        frame_number: int,
+        pixel: tuple[int, int],
+        metadata: dict[str, Any],
+    ) -> dict[str, str] | None:
+        if not self.enabled:
+            return None
+
+        timestamp = int(time.time())
+        stem = f"manual-click-frame-{frame_number}-{timestamp}"
+        full_path = self.path / f"{stem}.jpg"
+        metadata_path = self.path / f"{stem}.json"
+
+        annotated = frame.copy()
+        x, y = pixel
+        cv2.drawMarker(
+            annotated,
+            (x, y),
+            (255, 180, 80),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=28,
+            thickness=2,
+        )
+        cv2.putText(
+            annotated,
+            "manual click",
+            (max(0, x + 10), max(24, y - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 180, 80),
+            2,
+        )
+        cv2.imwrite(str(full_path), annotated, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+
+        payload = {
+            **metadata,
+            "pixel": [x, y],
+            "frame_number": frame_number,
+            "full_image_path": str(full_path),
+        }
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return {
+            "full_image_path": str(full_path),
+            "metadata_path": str(metadata_path),
+        }
+
 
 def _clamp_bbox(bbox: tuple[int, int, int, int], width: int, height: int) -> tuple[int, int, int, int]:
     x1, y1, x2, y2 = bbox
