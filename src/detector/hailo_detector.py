@@ -77,8 +77,7 @@ class HailoDetector:
         resized = cv2.resize(frame, (self._input_width, self._input_height), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         input_frame = np.ascontiguousarray(rgb.astype(np.uint8))
-        input_data = {self._input_info.name: input_frame}
-        results = self._infer_pipeline.infer(input_data)
+        results = self._infer_pipeline.infer(input_frame)
         raw_detections = _parse_hailo_yolo_outputs(
             results,
             frame_width=original_width,
