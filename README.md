@@ -150,6 +150,14 @@ python -m src.main --config config.yaml --backend hailo
 
 The current `HailoDetector` is an adapter boundary that verifies the Hailo runtime is importable and validates the model path. Wire its `detect()` method to the post-processing used by your selected Raspberry Pi Hailo YOLO person detector pipeline. The rest of the app already expects normalized `Detection` objects, so the Hailo-specific code stays contained.
 
+If PyHailoRT rejects the input buffer while bringing up a new model/runtime combination, run:
+
+```bash
+python tools/hailo_input_probe.py --model /usr/share/hailo-models/yolov8s_h8l.hef
+```
+
+The probe tries common PyHailoRT input formats and prints the first one accepted by the installed runtime.
+
 ## Configuration
 
 `config.yaml` controls:
