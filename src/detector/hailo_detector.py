@@ -1,21 +1,20 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 
 from src.config import DetectionConfig
 from src.detector.base import Detection, filter_person_detections
 
+LOGGER = logging.getLogger(__name__)
+
 
 class HailoDetector:
-    """Thin adapter for Raspberry Pi AI Kit/Hailo workflows.
-
-    The Raspberry Pi Hailo examples evolve quickly, so this class keeps hardware-specific
-    imports behind a small boundary. Install the official Hailo Raspberry Pi software and
-    set detection.hailo.model_path to the HEF/model used by your chosen pipeline.
-    """
+    """HailoRT detector for YOLO-style person models."""
 
     backend_name = "hailo"
 
@@ -31,22 +30,220 @@ class HailoDetector:
             ) from exc
 
         self._hailo_platform: Any = hailo_platform
-        if self.model_path and not self.model_path.exists():
+        if self.model_path is None:
+            raise ValueError("Hailo backend requires detection.hailo.model_path.")
+        if not self.model_path.exists():
             raise FileNotFoundError(f"Hailo model path does not exist: {self.model_path}")
 
-        raise NotImplementedError(
-            "Hailo runtime is available, but this prototype adapter still needs the exact "
-            "post-processing code for your chosen Hailo Raspberry Pi example/model. Use "
-            "--backend mock for development, or wire this class to your Hailo detection pipeline."
+        self._hef = hailo_platform.HEF(str(self.model_path))
+        self._target = hailo_platform.VDevice()
+        configure_params = hailo_platform.ConfigureParams.create_from_hef(
+            self._hef,
+            interface=hailo_platform.HailoStreamInterface.PCIe,
+        )
+        self._network_group = self._target.configure(self._hef, configure_params)[0]
+        self._network_group_params = self._network_group.create_params()
+        self._input_info = self._hef.get_input_vstream_infos()[0]
+        self._output_infos = self._hef.get_output_vstream_infos()
+        self._input_shape = _shape_tuple(getattr(self._input_info, "shape", (640, 640, 3)))
+        self._input_height, self._input_width = _infer_hw(self._input_shape)
+        self._input_vstreams_params = hailo_platform.InputVStreamParams.make_from_network_group(
+            self._network_group,
+            quantized=False,
+            format_type=hailo_platform.FormatType.UINT8,
+        )
+        self._output_vstreams_params = hailo_platform.OutputVStreamParams.make_from_network_group(
+            self._network_group,
+            quantized=False,
+            format_type=hailo_platform.FormatType.FLOAT32,
+        )
+        self._infer_context = hailo_platform.InferVStreams(
+            self._network_group,
+            self._input_vstreams_params,
+            self._output_vstreams_params,
+        )
+        self._infer_pipeline = self._infer_context.__enter__()
+        self._activation_context = self._network_group.activate(self._network_group_params)
+        self._activation_context.__enter__()
+        LOGGER.info(
+            "Loaded Hailo model %s with input %s and outputs %s",
+            self.model_path,
+            self._input_shape,
+            [getattr(info, "name", "output") for info in self._output_infos],
         )
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
-        raw_detections: list[Detection] = []
+        original_height, original_width = frame.shape[:2]
+        resized = cv2.resize(frame, (self._input_width, self._input_height), interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        input_data = {self._input_info.name: np.expand_dims(rgb, axis=0).astype(np.uint8)}
+        results = self._infer_pipeline.infer(input_data)
+        raw_detections = _parse_hailo_yolo_outputs(
+            results,
+            frame_width=original_width,
+            frame_height=original_height,
+            input_width=self._input_width,
+            input_height=self._input_height,
+        )
         return filter_person_detections(
             raw_detections,
             confidence_threshold=self.config.confidence_threshold,
             person_class_id=self.config.person_class_id,
         )
+
+    def close(self) -> None:
+        if hasattr(self, "_activation_context"):
+            self._activation_context.__exit__(None, None, None)
+            del self._activation_context
+        if hasattr(self, "_infer_context"):
+            self._infer_context.__exit__(None, None, None)
+            del self._infer_context
+        if hasattr(self, "_target"):
+            self._target.release()
+
+
+def _parse_hailo_yolo_outputs(
+    results: dict[str, Any],
+    frame_width: int,
+    frame_height: int,
+    input_width: int,
+    input_height: int,
+) -> list[Detection]:
+    detections: list[Detection] = []
+    for value in results.values():
+        detections.extend(_parse_output_value(value, frame_width, frame_height, input_width, input_height))
+    return _non_max_suppression(detections, iou_threshold=0.45)
+
+
+def _parse_output_value(
+    value: Any,
+    frame_width: int,
+    frame_height: int,
+    input_width: int,
+    input_height: int,
+) -> list[Detection]:
+    array = np.asarray(value)
+    if array.dtype == object:
+        return _parse_object_array(array, frame_width, frame_height)
+    squeezed = np.squeeze(array)
+    if squeezed.ndim == 2 and squeezed.shape[-1] >= 6:
+        return _parse_detection_rows(squeezed, frame_width, frame_height, input_width, input_height)
+    if squeezed.ndim == 3 and squeezed.shape[-1] >= 6:
+        return _parse_detection_rows(squeezed.reshape(-1, squeezed.shape[-1]), frame_width, frame_height, input_width, input_height)
+    LOGGER.debug("Unsupported Hailo output shape: %s", array.shape)
+    return []
+
+
+def _parse_object_array(array: np.ndarray, frame_width: int, frame_height: int) -> list[Detection]:
+    detections: list[Detection] = []
+    for class_id, class_detections in enumerate(array.flat):
+        rows = np.asarray(class_detections)
+        if rows.size == 0:
+            continue
+        rows = rows.reshape(-1, rows.shape[-1])
+        for row in rows:
+            if len(row) < 5:
+                continue
+            y1, x1, y2, x2, confidence = [float(item) for item in row[:5]]
+            detections.append(
+                Detection(
+                    bbox=_normalized_bbox_to_pixels(x1, y1, x2, y2, frame_width, frame_height),
+                    confidence=confidence,
+                    class_id=class_id,
+                    label="human" if class_id == 0 else str(class_id),
+                )
+            )
+    return detections
+
+
+def _parse_detection_rows(
+    rows: np.ndarray,
+    frame_width: int,
+    frame_height: int,
+    input_width: int,
+    input_height: int,
+) -> list[Detection]:
+    detections: list[Detection] = []
+    for row in rows:
+        values = [float(item) for item in row[:6]]
+        if len(values) < 6:
+            continue
+        x1, y1, x2, y2, confidence, class_id = values[:6]
+        if confidence <= 0:
+            continue
+        bbox = _bbox_to_pixels(x1, y1, x2, y2, frame_width, frame_height, input_width, input_height)
+        detections.append(
+            Detection(
+                bbox=bbox,
+                confidence=confidence,
+                class_id=int(class_id),
+                label="human" if int(class_id) == 0 else str(int(class_id)),
+            )
+        )
+    return detections
+
+
+def _bbox_to_pixels(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    frame_width: int,
+    frame_height: int,
+    input_width: int,
+    input_height: int,
+) -> tuple[int, int, int, int]:
+    if max(abs(x1), abs(y1), abs(x2), abs(y2)) <= 1.5:
+        return _normalized_bbox_to_pixels(x1, y1, x2, y2, frame_width, frame_height)
+    scale_x = frame_width / float(input_width)
+    scale_y = frame_height / float(input_height)
+    return _clamp_bbox(
+        int(x1 * scale_x),
+        int(y1 * scale_y),
+        int(x2 * scale_x),
+        int(y2 * scale_y),
+        frame_width,
+        frame_height,
+    )
+
+
+def _normalized_bbox_to_pixels(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    frame_width: int,
+    frame_height: int,
+) -> tuple[int, int, int, int]:
+    return _clamp_bbox(
+        int(x1 * frame_width),
+        int(y1 * frame_height),
+        int(x2 * frame_width),
+        int(y2 * frame_height),
+        frame_width,
+        frame_height,
+    )
+
+
+def _clamp_bbox(x1: int, y1: int, x2: int, y2: int, width: int, height: int) -> tuple[int, int, int, int]:
+    return (
+        max(0, min(width - 1, x1)),
+        max(0, min(height - 1, y1)),
+        max(1, min(width, x2)),
+        max(1, min(height, y2)),
+    )
+
+
+def _shape_tuple(shape: Any) -> tuple[int, ...]:
+    return tuple(int(item) for item in shape)
+
+
+def _infer_hw(shape: tuple[int, ...]) -> tuple[int, int]:
+    if len(shape) >= 3:
+        return int(shape[0]), int(shape[1])
+    if len(shape) == 2:
+        return int(shape[0]), int(shape[1])
+    return 640, 640
 
 
 class CpuDetector:

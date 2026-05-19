@@ -186,6 +186,9 @@ def main() -> int:
         LOGGER.info("Interrupted; shutting down.")
     finally:
         camera.stop()
+        close_detector = getattr(detector, "close", None)
+        if callable(close_detector):
+            close_detector()
         if writer:
             writer.release()
     return 0
