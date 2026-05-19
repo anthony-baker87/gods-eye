@@ -14,6 +14,11 @@ detection:
     model_path: null
     labels_path: null
     model_type: yolo
+    post_process_file: null
+    udp_host: 127.0.0.1
+    udp_port: 12347
+    lores_width: 640
+    lores_height: 640
 
 tracking:
   max_lost_frames: 12

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import logging
+import socket
+import struct
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +105,112 @@ class HailoDetector:
             del self._infer_context
         if hasattr(self, "_target"):
             self._target.release()
+
+
+class RpicamHailoUdpDetector:
+    """Detector fed by rpicam-apps Hailo object_detect_udp packets."""
+
+    backend_name = "rpicam_hailo"
+
+    def __init__(self, config: DetectionConfig) -> None:
+        self.config = config
+        self._lores_width = config.hailo.lores_width
+        self._lores_height = config.hailo.lores_height
+        self._detections: list[tuple[float, Detection]] = []
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.settimeout(0.2)
+        self._socket.bind((config.hailo.udp_host, config.hailo.udp_port))
+        self._thread = threading.Thread(target=self._listen, name="rpicam-hailo-udp", daemon=True)
+        self._thread.start()
+        LOGGER.info("Listening for rpicam Hailo detections on udp://%s:%s", config.hailo.udp_host, config.hailo.udp_port)
+
+    def detect(self, frame: np.ndarray) -> list[Detection]:
+        now = time.time()
+        frame_height, frame_width = frame.shape[:2]
+        with self._lock:
+            recent = [(seen_at, detection) for seen_at, detection in self._detections if now - seen_at <= 0.35]
+            self._detections = recent
+        scaled = [
+            _scale_udp_detection(
+                detection,
+                source_width=self._lores_width,
+                source_height=self._lores_height,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            for _, detection in recent
+        ]
+        return filter_person_detections(
+            _non_max_suppression(scaled, iou_threshold=0.35),
+            confidence_threshold=self.config.confidence_threshold,
+            person_class_id=self.config.person_class_id,
+        )
+
+    def close(self) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=1.0)
+        self._socket.close()
+
+    def _listen(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                packet, _ = self._socket.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            detection = _parse_object_detect_udp_packet(packet)
+            if detection is None:
+                continue
+            with self._lock:
+                self._detections.append((time.time(), detection))
+
+
+def _parse_object_detect_udp_packet(packet: bytes) -> Detection | None:
+    if len(packet) < 280:
+        return None
+    try:
+        _, x, y, width, height = struct.unpack_from("<Iiiii", packet, 0)
+        label = packet[21:276].split(b"\0", 1)[0].decode("utf-8", "ignore").strip().lower()
+        confidence = float(struct.unpack_from("<f", packet, 276)[0])
+    except (struct.error, UnicodeDecodeError):
+        return None
+    if width <= 0 or height <= 0 or not 0.0 <= confidence <= 1.0:
+        return None
+    class_id = 0 if label in {"person", "human"} else -1
+    return Detection(
+        bbox=(int(x), int(y), int(x + width), int(y + height)),
+        confidence=confidence,
+        class_id=class_id,
+        label="human" if class_id == 0 else label or "object",
+    )
+
+
+def _scale_udp_detection(
+    detection: Detection,
+    source_width: int,
+    source_height: int,
+    frame_width: int,
+    frame_height: int,
+) -> Detection:
+    x1, y1, x2, y2 = detection.bbox
+    scale_x = frame_width / float(source_width)
+    scale_y = frame_height / float(source_height)
+    return Detection(
+        bbox=_clamp_bbox(
+            int(x1 * scale_x),
+            int(y1 * scale_y),
+            int(x2 * scale_x),
+            int(y2 * scale_y),
+            frame_width,
+            frame_height,
+        ),
+        confidence=detection.confidence,
+        class_id=detection.class_id,
+        label=detection.label,
+    )
 
 
 def _parse_hailo_yolo_outputs(

@@ -1,6 +1,6 @@
 # God's Eye
 
-Python prototype for onboard person detection and tracking on a Raspberry Pi 5 16GB with the Raspberry Pi AI Kit / Hailo-8L accelerator and an IMX708 wide camera. The app captures frames with Picamera2 or `rpicam-vid`, detects people, assigns persistent track IDs, draws overlays, logs track events, and can serve a local MJPEG dashboard.
+Python prototype for onboard person detection and tracking on a Raspberry Pi 5 16GB with the Raspberry Pi AI Kit / Hailo-8L accelerator and an IMX708 wide camera. The app captures frames with Picamera2 or `rpicam-vid`, detects people, assigns persistent track IDs, draws overlays, logs track events, tags confirmed detections with GPS, and can serve a local MJPEG dashboard.
 
 The first version is designed to run even away from the hardware by using the `mock` backend and synthetic camera frames. That makes development, dashboard work, and tracker testing possible on a laptop or non-camera Pi.
 
@@ -65,7 +65,7 @@ rpicam-hello -t 5000
 
 On older Raspberry Pi OS images, these commands may still be named `libcamera-hello`.
 
-Install the Raspberry Pi AI Kit / Hailo software using Raspberry Pi and Hailo's current official instructions for your OS image. Hailo's older `hailo-rpi5-examples` repository now points developers toward the newer `hailo-apps` infrastructure, while still documenting basic detection pipelines such as `basic_pipelines/detection.py --input rpi`. The exact Hailo Python APIs and example pipelines change over time, so this repo keeps the hardware adapter isolated in `src/detector/hailo_detector.py`.
+Install the Raspberry Pi AI Kit / Hailo software using Raspberry Pi and Hailo's current official instructions for your OS image. This app uses the Raspberry Pi `rpicam-apps` Hailo post-processing path for the practical Pi backend because it is the same path used by `rpicam-hello --post-process-file`.
 
 ## Install Python Dependencies
 
@@ -131,24 +131,52 @@ The CPU backend downsizes frames internally for inference, so you can use a larg
 
 ## Run With Hailo Backend
 
-Set the backend and model path in `config.yaml`:
+First verify the Raspberry Pi Hailo post-process pipeline sees people:
+
+```bash
+rpicam-hello -t 0 \
+  --post-process-file /usr/share/rpi-camera-assets/hailo_yolov8_inference.json \
+  --lores-width 640 \
+  --lores-height 640
+```
+
+Stop that preview with `Ctrl+C`, then create the app's UDP-enabled post-process file:
+
+```bash
+python tools/make_rpicam_hailo_udp_config.py \
+  --source /usr/share/rpi-camera-assets/hailo_yolov8_inference.json \
+  --output hailo_yolov8_udp.json
+```
+
+Set the Pi config to use `rpicam_hailo`:
 
 ```yaml
+camera:
+  width: 1280
+  height: 720
+  fps: 30
+  source: rpicam
+
 detection:
-  backend: hailo
+  backend: rpicam_hailo
   confidence_threshold: 0.45
   hailo:
-    model_path: /path/to/model.hef
-    model_type: yolo
+    post_process_file: hailo_yolov8_udp.json
+    udp_host: 127.0.0.1
+    udp_port: 12347
+    lores_width: 640
+    lores_height: 640
 ```
 
 Then run:
 
 ```bash
-python -m src.main --config config.yaml --backend hailo
+python -m src.main --config config.pi.yaml --backend rpicam_hailo
 ```
 
-The current `HailoDetector` is an adapter boundary that verifies the Hailo runtime is importable and validates the model path. Wire its `detect()` method to the post-processing used by your selected Raspberry Pi Hailo YOLO person detector pipeline. The rest of the app already expects normalized `Detection` objects, so the Hailo-specific code stays contained.
+This starts `rpicam-vid` for dashboard video and asks `rpicam-apps` to run Hailo YOLO on the low-resolution stream. The `object_detect_udp` stage sends boxes to the app on localhost, and the app only keeps `person` detections before tracking, GPS pinning, logging, and snapshots.
+
+The older direct PyHailoRT adapter is still available as `--backend hailo`, but the current recommended Pi backend is `rpicam_hailo`.
 
 If PyHailoRT rejects the input buffer while bringing up a new model/runtime combination, run:
 
@@ -164,7 +192,7 @@ The probe tries common PyHailoRT input formats and prints the first one accepted
 
 - Camera width, height, and FPS
 - Camera source: `auto`, `picamera2`, `rpicam`, or `synthetic`
-- Detector backend: `hailo`, `cpu`, or `mock`
+- Detector backend: `rpicam_hailo`, `hailo`, `cpu`, or `mock`
 - Confidence threshold
 - Optional CPU full-body HOG detector toggle: `detection.cpu_full_body`
 - Optional normalized suppression zones for fixed false-positive regions

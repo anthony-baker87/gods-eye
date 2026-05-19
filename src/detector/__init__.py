@@ -4,7 +4,7 @@ from src.detector.base import Detection, Detector
 
 
 def create_detector(config: object) -> Detector:
-    from src.detector.hailo_detector import CpuDetector, HailoDetector
+    from src.detector.hailo_detector import CpuDetector, HailoDetector, RpicamHailoUdpDetector
     from src.detector.mock_detector import MockDetector
 
     backend = getattr(config, "backend")
@@ -17,6 +17,8 @@ def create_detector(config: object) -> Detector:
         )
     if backend == "hailo":
         return HailoDetector(config)
+    if backend == "rpicam_hailo":
+        return RpicamHailoUdpDetector(config)
     raise ValueError(f"Unknown detector backend: {backend}")
 
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.config import CameraConfig
+from src.config import CameraConfig, HailoConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -79,8 +79,9 @@ class PiCameraSource:
 class RpicamCameraSource:
     """Camera source backed by rpicam-vid MJPEG output."""
 
-    def __init__(self, config: CameraConfig) -> None:
+    def __init__(self, config: CameraConfig, hailo_config: HailoConfig | None = None) -> None:
         self.config = config
+        self.hailo_config = hailo_config
         self._process: subprocess.Popen[bytes] | None = None
         self._frame_number = 0
         self._buffer = bytearray()
@@ -106,6 +107,17 @@ class RpicamCameraSource:
             "--output",
             "-",
         ]
+        if self.hailo_config is not None and self.hailo_config.post_process_file:
+            command.extend(
+                [
+                    "--post-process-file",
+                    self.hailo_config.post_process_file,
+                    "--lores-width",
+                    str(self.hailo_config.lores_width),
+                    "--lores-height",
+                    str(self.hailo_config.lores_height),
+                ]
+            )
         try:
             self._process = subprocess.Popen(
                 command,
@@ -192,6 +204,7 @@ class SyntheticCameraSource:
 def create_camera(
     config: CameraConfig,
     allow_synthetic: bool = True,
+    hailo_config: HailoConfig | None = None,
 ) -> PiCameraSource | RpicamCameraSource | SyntheticCameraSource:
     source_order = {
         "auto": [PiCameraSource, RpicamCameraSource],
@@ -202,7 +215,10 @@ def create_camera(
 
     last_error: CameraError | None = None
     for source_type in source_order:
-        camera = source_type(config)
+        if source_type is RpicamCameraSource:
+            camera = source_type(config, hailo_config)
+        else:
+            camera = source_type(config)
         try:
             camera.start()
             LOGGER.info("Using camera source: %s", config.source if config.source != "auto" else source_type.__name__)

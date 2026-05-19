@@ -23,6 +23,11 @@ class HailoConfig:
     model_path: str | None = None
     labels_path: str | None = None
     model_type: str = "yolo"
+    post_process_file: str | None = None
+    udp_host: str = "127.0.0.1"
+    udp_port: int = 12347
+    lores_width: int = 640
+    lores_height: int = 640
 
 
 @dataclass(slots=True)
@@ -103,7 +108,7 @@ class AppConfig:
     snapshots: SnapshotsConfig = field(default_factory=SnapshotsConfig)
 
 
-VALID_BACKENDS = {"hailo", "cpu", "mock"}
+VALID_BACKENDS = {"hailo", "rpicam_hailo", "cpu", "mock"}
 
 
 def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
@@ -157,6 +162,11 @@ def load_config(path: str | Path) -> AppConfig:
                 model_path=hailo_raw.get("model_path"),
                 labels_path=hailo_raw.get("labels_path"),
                 model_type=str(hailo_raw.get("model_type", "yolo")).lower(),
+                post_process_file=hailo_raw.get("post_process_file"),
+                udp_host=str(hailo_raw.get("udp_host", "127.0.0.1")),
+                udp_port=int(hailo_raw.get("udp_port", 12347)),
+                lores_width=int(hailo_raw.get("lores_width", 640)),
+                lores_height=int(hailo_raw.get("lores_height", 640)),
             ),
         ),
         tracking=TrackingConfig(
@@ -324,5 +334,9 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("gps.longitude must be between -180 and 180.")
     if config.gps.gpsd_port <= 0:
         raise ValueError("gps.gpsd_port must be positive.")
+    if config.detection.hailo.udp_port <= 0:
+        raise ValueError("detection.hailo.udp_port must be positive.")
+    if config.detection.hailo.lores_width <= 0 or config.detection.hailo.lores_height <= 0:
+        raise ValueError("detection.hailo lores dimensions must be positive.")
     if not 1 <= config.snapshots.jpeg_quality <= 100:
         raise ValueError("snapshots.jpeg_quality must be between 1 and 100.")

@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Raspberry Pi drone person tracker")
     parser.add_argument("--config", default="config.yaml", help="Path to YAML configuration.")
     parser.add_argument("--no-dashboard", action="store_true", help="Disable local Flask dashboard.")
-    parser.add_argument("--backend", choices=["hailo", "cpu", "mock"], help="Override detector backend.")
+    parser.add_argument("--backend", choices=["hailo", "rpicam_hailo", "cpu", "mock"], help="Override detector backend.")
     parser.add_argument("--record-output", action="store_true", help="Record annotated video to output.path.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     return parser.parse_args()
@@ -68,7 +68,11 @@ def main() -> int:
         confidence_smoothing=config.tracking.confidence_smoothing,
     )
     snapshot_writer = SnapshotWriter(config.snapshots)
-    camera = create_camera(config.camera, allow_synthetic=config.detection.backend == "mock")
+    camera = create_camera(
+        config.camera,
+        allow_synthetic=config.detection.backend == "mock",
+        hailo_config=config.detection.hailo if config.detection.backend == "rpicam_hailo" else None,
+    )
     dashboard = None
     if config.dashboard.enabled:
         dashboard = DashboardServer(config.dashboard.host, config.dashboard.port, config.dashboard.jpeg_quality)
