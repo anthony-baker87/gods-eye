@@ -119,6 +119,7 @@ def main() -> int:
                     stats.fps,
                     stats.inference_ms,
                     detector.backend_name,
+                    draw_tracks=detector.backend_name != "rpicam_hailo",
                 )
                 event_logger.log_tracks(camera_frame.frame_number, active_human_tracks)
                 snapshot_paths_by_track = {
