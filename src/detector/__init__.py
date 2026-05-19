@@ -11,7 +11,10 @@ def create_detector(config: object) -> Detector:
     if backend == "mock":
         return MockDetector()
     if backend == "cpu":
-        return CpuDetector(confidence_threshold=getattr(config, "confidence_threshold"))
+        return CpuDetector(
+            confidence_threshold=getattr(config, "confidence_threshold"),
+            enable_full_body=getattr(config, "cpu_full_body", False),
+        )
     if backend == "hailo":
         return HailoDetector(config)
     raise ValueError(f"Unknown detector backend: {backend}")

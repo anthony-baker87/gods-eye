@@ -15,6 +15,8 @@ from src.detector import create_detector
 from src.gps import create_gps_source
 from src.logger import TrackEventLogger
 from src.overlay import draw_overlay
+from src.snapshots import SnapshotWriter
+from src.suppression import filter_suppression_zones
 from src.tracking import CentroidTracker
 from src.utils import PerformanceStats
 
@@ -61,7 +63,11 @@ def main() -> int:
     tracker = CentroidTracker(
         max_lost_frames=config.tracking.max_lost_frames,
         max_distance=config.tracking.max_distance,
+        confirmation_frames=config.tracking.confirmation_frames,
+        min_confirmed_confidence=config.tracking.min_confirmed_confidence,
+        confidence_smoothing=config.tracking.confidence_smoothing,
     )
+    snapshot_writer = SnapshotWriter(config.snapshots)
     camera = create_camera(config.camera, allow_synthetic=config.detection.backend == "mock")
     dashboard = None
     if config.dashboard.enabled:
@@ -88,12 +94,20 @@ def main() -> int:
                 camera_frame = camera.read()
                 inference_start = time.perf_counter()
                 detections = detector.detect(camera_frame.frame)
+                detections = filter_suppression_zones(
+                    detections,
+                    config.detection.suppression_zones,
+                    frame_width=int(camera_frame.frame.shape[1]),
+                    frame_height=int(camera_frame.frame.shape[0]),
+                )
                 stats.inference_ms = (time.perf_counter() - inference_start) * 1000.0
-                tracks = tracker.update(detections)
+                tracks = tracker.update(detections, camera_frame.frame_number)
                 current_location = gps_source.read()
                 stats.mark_frame()
                 active_tracks = [track for track in tracks if track.lost_frames == 0]
-                active_human_tracks = [track for track in active_tracks if track.label == "human"]
+                active_human_tracks = [
+                    track for track in active_tracks if track.label == "human" and track.confirmed
+                ]
 
                 annotated = draw_overlay(
                     camera_frame.frame,
@@ -102,22 +116,36 @@ def main() -> int:
                     stats.inference_ms,
                     detector.backend_name,
                 )
-                event_logger.log_tracks(camera_frame.frame_number, tracks)
+                event_logger.log_tracks(camera_frame.frame_number, active_human_tracks)
+                snapshot_paths_by_track = {
+                    track.track_id: snapshot_writer.save_once(
+                        camera_frame.frame,
+                        track,
+                        camera_frame.frame_number,
+                        {
+                            "gps": None if current_location is None else current_location.as_dict(),
+                            "detector_backend": detector.backend_name,
+                            "event": "confirmed_human",
+                        },
+                    )
+                    for track in active_human_tracks
+                }
                 detection_pins = []
                 if current_location is not None:
                     for track in active_human_tracks:
-                        if track.age < pin_min_track_age:
+                        if track.hits < pin_min_track_age:
                             continue
                         recent_detection_pins[track.track_id] = {
                             "track_id": track.track_id,
                             "latitude": current_location.latitude,
                             "longitude": current_location.longitude,
                             "altitude_m": current_location.altitude_m,
-                            "confidence": round(track.confidence, 3),
+                            "confidence": round(track.smoothed_confidence, 3),
                             "label": track.label,
                             "timestamp": current_location.timestamp,
                             "last_seen": time.time(),
                             "source": current_location.source,
+                            "snapshot": snapshot_paths_by_track.get(track.track_id),
                         }
                 cutoff = time.time() - pin_ttl_seconds
                 recent_detection_pins = {
@@ -136,6 +164,9 @@ def main() -> int:
                             "track_id": track.track_id,
                             "bbox": list(track.bbox),
                             "confidence": round(track.confidence, 3),
+                            "smoothed_confidence": round(track.smoothed_confidence, 3),
+                            "hits": track.hits,
+                            "confirmed": track.confirmed,
                             "label": track.label,
                             "lost_frames": track.lost_frames,
                         }

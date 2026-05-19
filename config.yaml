@@ -8,13 +8,19 @@ detection:
   backend: mock
   confidence_threshold: 0.45
   person_class_id: 0
+  cpu_full_body: false
+  suppression_zones: []
   hailo:
     model_path: null
     labels_path: null
+    model_type: yolo
 
 tracking:
   max_lost_frames: 12
   max_distance: 90
+  confirmation_frames: 3
+  min_confirmed_confidence: 0.7
+  confidence_smoothing: 0.35
 
 dashboard:
   enabled: true
@@ -38,3 +44,8 @@ logging:
 output:
   record: false
   path: output/annotated.mp4
+
+snapshots:
+  enabled: true
+  path: output/snapshots
+  jpeg_quality: 90

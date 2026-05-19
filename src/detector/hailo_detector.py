@@ -50,18 +50,21 @@ class HailoDetector:
 
 
 class CpuDetector:
-    """CPU fallback using OpenCV full-person and face detectors."""
+    """CPU fallback using OpenCV face detection, with optional HOG full-body detection."""
 
     backend_name = "cpu"
 
-    def __init__(self, confidence_threshold: float = 0.45) -> None:
+    def __init__(self, confidence_threshold: float = 0.45, enable_full_body: bool = False) -> None:
         import cv2
 
         self.confidence_threshold = confidence_threshold
+        self.enable_full_body = enable_full_body
         self.max_inference_size = 640
         self._cv2 = cv2
-        self._hog = cv2.HOGDescriptor()
-        self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self._hog = None
+        if self.enable_full_body:
+            self._hog = cv2.HOGDescriptor()
+            self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         cascade_dir = Path(cv2.data.haarcascades)
         self._face = cv2.CascadeClassifier(str(cascade_dir / "haarcascade_frontalface_default.xml"))
 
@@ -72,7 +75,8 @@ class CpuDetector:
         gray = cv2.equalizeHist(gray)
         detections: list[Detection] = []
 
-        detections.extend(self._detect_hog(inference_frame))
+        if self.enable_full_body:
+            detections.extend(self._detect_hog(inference_frame))
         detections.extend(self._detect_cascade(gray, self._face, confidence=0.85))
 
         detections = [detection for detection in detections if detection.confidence >= self.confidence_threshold]
@@ -91,6 +95,8 @@ class CpuDetector:
         return resized, scale
 
     def _detect_hog(self, frame: np.ndarray) -> list[Detection]:
+        if self._hog is None:
+            return []
         rects, weights = self._hog.detectMultiScale(frame, winStride=(8, 8), padding=(16, 16), scale=1.05)
         detections: list[Detection] = []
         for (x, y, w, h), weight in zip(rects, weights):

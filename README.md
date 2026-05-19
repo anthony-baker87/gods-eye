@@ -35,6 +35,8 @@ gods-eye/
     dashboard/
       server.py
     gps.py
+    snapshots.py
+    suppression.py
     overlay.py
     logger.py
     config.py
@@ -117,13 +119,15 @@ python -m src.main --config config.pi.yaml --backend mock --no-dashboard
 
 ## Run With CPU Backend
 
-The CPU backend uses OpenCV HOG plus face detection. It is included as a development fallback, not as the target real-time path:
+The CPU backend uses OpenCV face detection by default. It is included as a development fallback, not as the target real-time path:
 
 ```bash
 python -m src.main --config config.pi.yaml --backend cpu --debug
 ```
 
-Expect lower accuracy and performance than a modern Hailo model. It works best with good lighting and may detect faces when a full standing person is not visible. The CPU backend downsizes frames internally for inference, so you can use a larger camera stream such as 1280x720 for the dashboard without making CPU detection scale linearly with video size.
+Expect lower accuracy and performance than a modern Hailo model. It works best with good lighting and a visible face. The older OpenCV HOG full-body detector is disabled by default because it can mistake vertical hardware, furniture, or bright edges for people. To opt into it for outdoor experiments, set `detection.cpu_full_body: true`.
+
+The CPU backend downsizes frames internally for inference, so you can use a larger camera stream such as 1280x720 for the dashboard without making CPU detection scale linearly with video size.
 
 ## Run With Hailo Backend
 
@@ -135,6 +139,7 @@ detection:
   confidence_threshold: 0.45
   hailo:
     model_path: /path/to/model.hef
+    model_type: yolo
 ```
 
 Then run:
@@ -143,7 +148,7 @@ Then run:
 python -m src.main --config config.yaml --backend hailo
 ```
 
-The current `HailoDetector` is an adapter boundary that verifies the Hailo runtime is importable and validates the model path. Wire its `detect()` method to the post-processing used by your selected Raspberry Pi Hailo example, such as a YOLO person detector pipeline. The rest of the app already expects normalized `Detection` objects, so the Hailo-specific code stays contained.
+The current `HailoDetector` is an adapter boundary that verifies the Hailo runtime is importable and validates the model path. Wire its `detect()` method to the post-processing used by your selected Raspberry Pi Hailo YOLO person detector pipeline. The rest of the app already expects normalized `Detection` objects, so the Hailo-specific code stays contained.
 
 ## Configuration
 
@@ -153,11 +158,15 @@ The current `HailoDetector` is an adapter boundary that verifies the Hailo runti
 - Camera source: `auto`, `picamera2`, `rpicam`, or `synthetic`
 - Detector backend: `hailo`, `cpu`, or `mock`
 - Confidence threshold
+- Optional CPU full-body HOG detector toggle: `detection.cpu_full_body`
+- Optional normalized suppression zones for fixed false-positive regions
 - Tracker maximum lost frames and matching distance
+- Track confirmation frames, minimum smoothed confidence, and confidence smoothing
 - Dashboard host, port, and JPEG quality
 - Optional GPS provider for detection map pins: disabled, static test coordinates, or `gpsd`
 - JSONL logging enabled/path
 - Optional annotated video recording path
+- Snapshot output for confirmed detection events
 
 CLI overrides:
 
@@ -234,12 +243,46 @@ cgps
 
 When a human track is detected for several consecutive frames, the dashboard pins the current drone/camera GPS position and keeps that "last seen" pin for 60 seconds after the last matching detection. Estimating the detected person's actual ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
 
+## Detection Quality Controls
+
+Tracks are only reported after repeated evidence. The defaults require three matched frames and a smoothed confidence of at least `0.7`:
+
+```yaml
+tracking:
+  max_lost_frames: 12
+  max_distance: 90
+  confirmation_frames: 3
+  min_confirmed_confidence: 0.7
+  confidence_smoothing: 0.35
+```
+
+Use suppression zones to ignore fixed camera regions that contain the drone body, propellers, landing gear, or other repeat false positives. Coordinates are normalized from `0.0` to `1.0` across the frame:
+
+```yaml
+detection:
+  suppression_zones:
+    - name: drone_body_bottom_left
+      x1: 0.0
+      y1: 0.65
+      x2: 0.25
+      y2: 1.0
+```
+
+Confirmed detections save a full-frame snapshot, crop, and JSON metadata once per track:
+
+```yaml
+snapshots:
+  enabled: true
+  path: output/snapshots
+  jpeg_quality: 90
+```
+
 ## Logging
 
 When enabled, track events are appended to JSONL:
 
 ```json
-{"timestamp":1710000000.0,"frame_number":42,"track_id":1,"bbox":[100,120,240,420],"confidence":0.91,"label":"human"}
+{"timestamp":1710000000.0,"frame_number":42,"track_id":1,"bbox":[100,120,240,420],"confidence":0.91,"smoothed_confidence":0.88,"confirmed":true,"label":"human"}
 ```
 
 Only live, matched tracks are logged each frame. Lost tracks are retained internally for ID persistence but are not written as fresh detections.

@@ -22,6 +22,16 @@ class CameraConfig:
 class HailoConfig:
     model_path: str | None = None
     labels_path: str | None = None
+    model_type: str = "yolo"
+
+
+@dataclass(slots=True)
+class SuppressionZoneConfig:
+    name: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
 
 
 @dataclass(slots=True)
@@ -29,6 +39,8 @@ class DetectionConfig:
     backend: str = "mock"
     confidence_threshold: float = 0.45
     person_class_id: int = 0
+    cpu_full_body: bool = False
+    suppression_zones: list[SuppressionZoneConfig] = field(default_factory=list)
     hailo: HailoConfig = field(default_factory=HailoConfig)
 
 
@@ -36,6 +48,9 @@ class DetectionConfig:
 class TrackingConfig:
     max_lost_frames: int = 12
     max_distance: float = 90.0
+    confirmation_frames: int = 3
+    min_confirmed_confidence: float = 0.7
+    confidence_smoothing: float = 0.35
 
 
 @dataclass(slots=True)
@@ -70,6 +85,13 @@ class OutputConfig:
 
 
 @dataclass(slots=True)
+class SnapshotsConfig:
+    enabled: bool = True
+    path: str = "output/snapshots"
+    jpeg_quality: int = 90
+
+
+@dataclass(slots=True)
 class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
@@ -78,6 +100,7 @@ class AppConfig:
     gps: GpsConfig = field(default_factory=GpsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    snapshots: SnapshotsConfig = field(default_factory=SnapshotsConfig)
 
 
 VALID_BACKENDS = {"hailo", "cpu", "mock"}
@@ -110,6 +133,7 @@ def load_config(path: str | Path) -> AppConfig:
     gps_raw = _section(raw, "gps")
     logging_raw = _section(raw, "logging")
     output_raw = _section(raw, "output")
+    snapshots_raw = _section(raw, "snapshots")
     hailo_raw = _section(detection_raw, "hailo")
 
     backend = str(detection_raw.get("backend", "mock")).lower()
@@ -127,14 +151,20 @@ def load_config(path: str | Path) -> AppConfig:
             backend=backend,
             confidence_threshold=float(detection_raw.get("confidence_threshold", 0.45)),
             person_class_id=int(detection_raw.get("person_class_id", 0)),
+            cpu_full_body=bool(detection_raw.get("cpu_full_body", False)),
+            suppression_zones=_parse_suppression_zones(detection_raw.get("suppression_zones", [])),
             hailo=HailoConfig(
                 model_path=hailo_raw.get("model_path"),
                 labels_path=hailo_raw.get("labels_path"),
+                model_type=str(hailo_raw.get("model_type", "yolo")).lower(),
             ),
         ),
         tracking=TrackingConfig(
             max_lost_frames=int(tracking_raw.get("max_lost_frames", 12)),
             max_distance=float(tracking_raw.get("max_distance", 90.0)),
+            confirmation_frames=int(tracking_raw.get("confirmation_frames", 3)),
+            min_confirmed_confidence=float(tracking_raw.get("min_confirmed_confidence", 0.7)),
+            confidence_smoothing=float(tracking_raw.get("confidence_smoothing", 0.35)),
         ),
         dashboard=DashboardConfig(
             enabled=bool(dashboard_raw.get("enabled", True)),
@@ -158,6 +188,11 @@ def load_config(path: str | Path) -> AppConfig:
         output=OutputConfig(
             record=bool(output_raw.get("record", False)),
             path=str(output_raw.get("path", "output/annotated.mp4")),
+        ),
+        snapshots=SnapshotsConfig(
+            enabled=bool(snapshots_raw.get("enabled", True)),
+            path=str(snapshots_raw.get("path", "output/snapshots")),
+            jpeg_quality=int(snapshots_raw.get("jpeg_quality", 90)),
         ),
     )
     validate_config(config)
@@ -233,6 +268,27 @@ def _optional_float(value: Any) -> float | None:
     return float(value)
 
 
+def _parse_suppression_zones(raw: Any) -> list[SuppressionZoneConfig]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("detection.suppression_zones must be a list.")
+    zones: list[SuppressionZoneConfig] = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("Each suppression zone must be a mapping.")
+        zones.append(
+            SuppressionZoneConfig(
+                name=str(item.get("name", f"zone_{index}")),
+                x1=float(item.get("x1")),
+                y1=float(item.get("y1")),
+                x2=float(item.get("x2")),
+                y2=float(item.get("y2")),
+            )
+        )
+    return zones
+
+
 def validate_config(config: AppConfig) -> None:
     if config.camera.width <= 0 or config.camera.height <= 0:
         raise ValueError("Camera width and height must be positive.")
@@ -242,10 +298,19 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("camera.source must be one of: auto, picamera2, rpicam, synthetic.")
     if not 0.0 <= config.detection.confidence_threshold <= 1.0:
         raise ValueError("Detection confidence_threshold must be between 0 and 1.")
+    for zone in config.detection.suppression_zones:
+        if not 0.0 <= zone.x1 < zone.x2 <= 1.0 or not 0.0 <= zone.y1 < zone.y2 <= 1.0:
+            raise ValueError("Suppression zones must use normalized coordinates between 0 and 1.")
     if config.tracking.max_lost_frames < 0:
         raise ValueError("tracking.max_lost_frames must be >= 0.")
     if config.tracking.max_distance <= 0:
         raise ValueError("tracking.max_distance must be positive.")
+    if config.tracking.confirmation_frames <= 0:
+        raise ValueError("tracking.confirmation_frames must be positive.")
+    if not 0.0 <= config.tracking.min_confirmed_confidence <= 1.0:
+        raise ValueError("tracking.min_confirmed_confidence must be between 0 and 1.")
+    if not 0.0 <= config.tracking.confidence_smoothing <= 1.0:
+        raise ValueError("tracking.confidence_smoothing must be between 0 and 1.")
     if not 1 <= config.dashboard.jpeg_quality <= 100:
         raise ValueError("dashboard.jpeg_quality must be between 1 and 100.")
     if config.gps.provider not in {"static", "gpsd"}:
@@ -259,3 +324,5 @@ def validate_config(config: AppConfig) -> None:
         raise ValueError("gps.longitude must be between -180 and 180.")
     if config.gps.gpsd_port <= 0:
         raise ValueError("gps.gpsd_port must be positive.")
+    if not 1 <= config.snapshots.jpeg_quality <= 100:
+        raise ValueError("snapshots.jpeg_quality must be between 1 and 100.")

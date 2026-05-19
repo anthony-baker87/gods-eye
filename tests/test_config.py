@@ -15,6 +15,7 @@ def test_load_config_defaults_and_values() -> None:
     assert config.camera.fps == 30
     assert config.detection.backend == "mock"
     assert config.detection.confidence_threshold == 0.6
+    assert config.detection.cpu_full_body is False
 
 
 def test_invalid_backend_rejected() -> None:
@@ -52,4 +53,24 @@ detection:
     )
 
     with pytest.raises(ValueError, match="Static GPS"):
+        load_config(config_path)
+
+
+def test_suppression_zone_must_be_normalized(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad_suppression_zone.yaml"
+    config_path.write_text(
+        """
+detection:
+  backend: mock
+  suppression_zones:
+    - name: drone_body
+      x1: 0.1
+      y1: 0.1
+      x2: 1.2
+      y2: 0.5
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Suppression zones"):
         load_config(config_path)
