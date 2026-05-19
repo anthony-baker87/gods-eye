@@ -49,7 +49,7 @@ class HailoDetector:
         self._input_height, self._input_width = _infer_hw(self._input_shape)
         self._input_vstreams_params = hailo_platform.InputVStreamParams.make_from_network_group(
             self._network_group,
-            quantized=False,
+            quantized=True,
             format_type=hailo_platform.FormatType.UINT8,
         )
         self._output_vstreams_params = hailo_platform.OutputVStreamParams.make_from_network_group(
@@ -77,7 +77,8 @@ class HailoDetector:
         resized = cv2.resize(frame, (self._input_width, self._input_height), interpolation=cv2.INTER_AREA)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         input_frame = np.ascontiguousarray(rgb.astype(np.uint8))
-        results = self._infer_pipeline.infer(input_frame)
+        input_data = {self._input_info.name: np.expand_dims(input_frame, axis=0)}
+        results = self._infer_pipeline.infer(input_data)
         raw_detections = _parse_hailo_yolo_outputs(
             results,
             frame_width=original_width,
