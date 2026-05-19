@@ -15,7 +15,7 @@ from src.tracking import Track
 class SnapshotWriter:
     def __init__(self, config: SnapshotsConfig) -> None:
         self.enabled = config.enabled
-        self.path = Path(config.path)
+        self.path = Path(config.path).expanduser().resolve()
         self.jpeg_quality = config.jpeg_quality
         self._saved_track_ids: set[int] = set()
         if self.enabled:

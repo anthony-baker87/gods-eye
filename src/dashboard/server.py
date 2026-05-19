@@ -195,7 +195,7 @@ def create_app(state: SharedState) -> Flask:
     @app.get("/snapshot")
     def snapshot() -> Response:
         path = request.args.get("path", "")
-        snapshot_path = Path(path)
+        snapshot_path = _resolve_snapshot_path(path)
         if not snapshot_path.is_file():
             abort(404)
         return send_file(snapshot_path)
@@ -205,6 +205,18 @@ def create_app(state: SharedState) -> Flask:
         return Response(_mjpeg_frames(state), mimetype="multipart/x-mixed-replace; boundary=frame")
 
     return app
+
+
+def _resolve_snapshot_path(path: str) -> Path:
+    snapshot_path = Path(path).expanduser()
+    if snapshot_path.is_file():
+        return snapshot_path
+    if not snapshot_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[2]
+        project_snapshot_path = project_root / snapshot_path
+        if project_snapshot_path.is_file():
+            return project_snapshot_path
+    return snapshot_path
 
 
 def _mjpeg_frames(state: SharedState):
