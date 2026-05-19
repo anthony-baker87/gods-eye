@@ -79,6 +79,7 @@ def main() -> int:
     stats = PerformanceStats()
     stats.start()
     pin_ttl_seconds = 60.0
+    pin_min_track_age = 3
     recent_detection_pins: dict[int, dict[str, object]] = {}
 
     try:
@@ -105,6 +106,8 @@ def main() -> int:
                 detection_pins = []
                 if current_location is not None:
                     for track in active_human_tracks:
+                        if track.age < pin_min_track_age:
+                            continue
                         recent_detection_pins[track.track_id] = {
                             "track_id": track.track_id,
                             "latitude": current_location.latitude,

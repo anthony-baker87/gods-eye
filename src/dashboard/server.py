@@ -36,11 +36,11 @@ def create_app(state: SharedState) -> Flask:
             <style>
               body { margin: 0; background: #101418; color: #eef2f6; font-family: system-ui, sans-serif; }
               header { padding: 14px 18px; background: #171d24; display: flex; justify-content: space-between; }
-              main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 16px; }
+              main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 32vw); gap: 16px; padding: 16px; }
               img { width: 100%; height: auto; background: #050608; display: block; }
               aside { display: grid; gap: 16px; align-content: start; }
-              #map { height: 300px; background: #171d24; border-radius: 6px; overflow: hidden; }
-              pre { white-space: pre-wrap; background: #171d24; padding: 12px; border-radius: 6px; }
+              #map { height: min(56vh, 620px); min-height: 440px; background: #171d24; border-radius: 6px; overflow: hidden; }
+              pre { white-space: pre-wrap; background: #171d24; padding: 12px; border-radius: 6px; max-height: 38vh; overflow: auto; }
               @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
             </style>
           </head>

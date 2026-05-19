@@ -232,7 +232,7 @@ sudo systemctl restart gpsd.socket
 cgps
 ```
 
-When a human is detected, the dashboard pins the current drone/camera GPS position and keeps that "last seen" pin for 60 seconds after the last matching detection. Estimating the detected person's actual ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
+When a human track is detected for several consecutive frames, the dashboard pins the current drone/camera GPS position and keeps that "last seen" pin for 60 seconds after the last matching detection. Estimating the detected person's actual ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
 
 ## Logging
 
