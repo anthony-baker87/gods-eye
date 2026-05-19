@@ -72,7 +72,7 @@ def create_app(state: SharedState) -> Flask:
                   const key = String(pin.track_id);
                   activeKeys.add(key);
                   const latlng = [pin.latitude, pin.longitude];
-                  const text = `Human ${pin.track_id} | ${Number(pin.confidence).toFixed(2)} | ${pin.source}`;
+                  const text = `Human ${pin.track_id} last seen | ${Number(pin.confidence).toFixed(2)} | ${pin.source}`;
                   if (markers.has(key)) {
                     markers.get(key).setLatLng(latlng).bindPopup(text);
                   } else {

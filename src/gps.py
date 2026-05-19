@@ -60,27 +60,60 @@ class GpsdGpsSource(GpsSource):
     def __init__(self, config: GpsConfig) -> None:
         self.host = config.gpsd_host
         self.port = config.gpsd_port
-        self.timeout_seconds = 0.25
+        self.timeout_seconds = 0.05
+        self._socket: socket.socket | None = None
+        self._buffer = ""
+        self._latest: GpsLocation | None = None
 
     def read(self) -> GpsLocation | None:
+        self._ensure_connected()
+        if self._socket is None:
+            return self._latest
+
+        deadline = time.monotonic() + self.timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                chunk = self._socket.recv(4096).decode("utf-8", errors="ignore")
+            except TimeoutError:
+                break
+            except OSError as exc:
+                LOGGER.debug("gpsd read failed: %s", exc)
+                self._close()
+                break
+            if not chunk:
+                self._close()
+                break
+            self._buffer += chunk
+            lines = self._buffer.splitlines(keepends=True)
+            self._buffer = ""
+            for line in lines:
+                if line.endswith("\n") or line.endswith("\r"):
+                    location = self._parse_line(line.strip())
+                    if location is not None:
+                        self._latest = location
+                else:
+                    self._buffer = line
+        return self._latest
+
+    def _ensure_connected(self) -> None:
+        if self._socket is not None:
+            return
         try:
-            with socket.create_connection((self.host, self.port), timeout=self.timeout_seconds) as sock:
-                sock.settimeout(self.timeout_seconds)
-                sock.sendall(b'?WATCH={"enable":true,"json":true};\n')
-                deadline = time.monotonic() + self.timeout_seconds
-                buffer = ""
-                while time.monotonic() < deadline:
-                    chunk = sock.recv(4096).decode("utf-8", errors="ignore")
-                    if not chunk:
-                        break
-                    buffer += chunk
-                    for line in buffer.splitlines():
-                        location = self._parse_line(line)
-                        if location is not None:
-                            return location
+            self._socket = socket.create_connection((self.host, self.port), timeout=self.timeout_seconds)
+            self._socket.settimeout(self.timeout_seconds)
+            self._socket.sendall(b'?WATCH={"enable":true,"json":true};\n')
         except OSError as exc:
             LOGGER.debug("gpsd read failed: %s", exc)
-        return None
+            self._close()
+
+    def _close(self) -> None:
+        if self._socket is None:
+            return
+        try:
+            self._socket.close()
+        finally:
+            self._socket = None
+            self._buffer = ""
 
     def _parse_line(self, line: str) -> GpsLocation | None:
         try:

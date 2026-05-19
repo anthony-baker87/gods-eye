@@ -78,6 +78,8 @@ def main() -> int:
 
     stats = PerformanceStats()
     stats.start()
+    pin_ttl_seconds = 60.0
+    recent_detection_pins: dict[int, dict[str, object]] = {}
 
     try:
         with TrackEventLogger(config.logging.enabled, config.logging.path) as event_logger:
@@ -102,8 +104,8 @@ def main() -> int:
                 event_logger.log_tracks(camera_frame.frame_number, tracks)
                 detection_pins = []
                 if current_location is not None:
-                    detection_pins = [
-                        {
+                    for track in active_human_tracks:
+                        recent_detection_pins[track.track_id] = {
                             "track_id": track.track_id,
                             "latitude": current_location.latitude,
                             "longitude": current_location.longitude,
@@ -111,10 +113,16 @@ def main() -> int:
                             "confidence": round(track.confidence, 3),
                             "label": track.label,
                             "timestamp": current_location.timestamp,
+                            "last_seen": time.time(),
                             "source": current_location.source,
                         }
-                        for track in active_human_tracks
-                    ]
+                cutoff = time.time() - pin_ttl_seconds
+                recent_detection_pins = {
+                    track_id: pin
+                    for track_id, pin in recent_detection_pins.items()
+                    if float(pin.get("last_seen", 0.0)) >= cutoff
+                }
+                detection_pins = list(recent_detection_pins.values())
 
                 status = {
                     "fps": round(stats.fps, 2),
