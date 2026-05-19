@@ -34,6 +34,7 @@ gods-eye/
       centroid_tracker.py
     dashboard/
       server.py
+    gps.py
     overlay.py
     logger.py
     config.py
@@ -69,19 +70,37 @@ Install the Raspberry Pi AI Kit / Hailo software using Raspberry Pi and Hailo's 
 From this directory:
 
 ```bash
-python3 -m venv .venv
+python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install Flask PyYAML pytest
 ```
 
-On Raspberry Pi OS, prefer the system `python3-picamera2` and `python3-opencv` packages for camera/OpenCV integration. If `pip install opencv-python` causes conflicts on the Pi, remove it from `requirements.txt` and use the apt package.
+On Raspberry Pi OS, prefer the system `python3-picamera2`, `python3-opencv`, and `numpy` packages for camera/OpenCV integration. The `--system-site-packages` virtualenv lets the app use those apt packages. On non-Pi development machines, `pip install -r requirements.txt` is fine.
+
+For Pi-specific settings, copy the tracked config and keep the copy local:
+
+```bash
+cp config.yaml config.pi.yaml
+echo "config.pi*.yaml" >> .git/info/exclude
+```
+
+Example Pi camera settings:
+
+```yaml
+camera:
+  width: 1280
+  height: 720
+  fps: 30
+  source: rpicam
+```
 
 ## Run With Mock Backend
 
-Mock mode is the safest first run. It uses synthetic frames if Picamera2 is unavailable and generates moving person detections:
+Mock mode is the safest first run. It uses the configured camera source when available and generates fake moving person detections. If real camera startup fails in mock mode, it can fall back to synthetic frames:
 
 ```bash
-python -m src.main --config config.yaml --backend mock --debug
+python -m src.main --config config.pi.yaml --backend mock --debug
 ```
 
 Open the dashboard from another device on the same network:
@@ -93,18 +112,18 @@ http://<pi-ip-address>:8080
 Or disable the dashboard:
 
 ```bash
-python -m src.main --config config.yaml --backend mock --no-dashboard
+python -m src.main --config config.pi.yaml --backend mock --no-dashboard
 ```
 
 ## Run With CPU Backend
 
-The CPU backend uses OpenCV HOG plus face and upper-body cascades. It is included as a development fallback, not as the target real-time path:
+The CPU backend uses OpenCV HOG plus face detection. It is included as a development fallback, not as the target real-time path:
 
 ```bash
-python -m src.main --config config.yaml --backend cpu
+python -m src.main --config config.pi.yaml --backend cpu --debug
 ```
 
-Expect lower accuracy and performance than a modern Hailo model. It works best with good lighting and may detect faces or upper bodies when a full standing person is not visible.
+Expect lower accuracy and performance than a modern Hailo model. It works best with good lighting and may detect faces when a full standing person is not visible. The CPU backend downsizes frames internally for inference, so you can use a larger camera stream such as 1280x720 for the dashboard without making CPU detection scale linearly with video size.
 
 ## Run With Hailo Backend
 
@@ -149,7 +168,7 @@ python -m src.main --config config.yaml --backend mock --record-output --debug
 ## Dashboard Endpoints
 
 - `/` shows MJPEG video with overlays and live status JSON.
-- The dashboard map places a pin for active detections when GPS is enabled.
+- The dashboard map places a "last seen" pin when a human is detected and GPS is enabled.
 - `/video.mjpg` streams annotated frames.
 - `/status.json` returns current status:
 
@@ -189,14 +208,38 @@ gps:
   gpsd_port: 2947
 ```
 
-The first implementation pins detections at the current drone/camera GPS position. Estimating the detected person's ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
+To configure `gpsd` for a soldered UART GPS on `/dev/serial0`, edit `/etc/default/gpsd`:
+
+```bash
+sudo nano /etc/default/gpsd
+```
+
+Use:
+
+```bash
+DEVICES="/dev/serial0"
+GPSD_OPTIONS="-n"
+USBAUTO="false"
+```
+
+Then restart and test:
+
+```bash
+sudo systemctl stop gpsd.socket gpsd
+sudo killall gpsd 2>/dev/null
+sudo systemctl enable gpsd.socket
+sudo systemctl restart gpsd.socket
+cgps
+```
+
+When a human is detected, the dashboard pins the current drone/camera GPS position and keeps that "last seen" pin for 60 seconds after the last matching detection. Estimating the detected person's actual ground coordinate requires drone altitude, camera angle, field of view calibration, and a ground-plane projection.
 
 ## Logging
 
 When enabled, track events are appended to JSONL:
 
 ```json
-{"timestamp":1710000000.0,"frame_number":42,"track_id":1,"bbox":[100,120,240,420],"confidence":0.91}
+{"timestamp":1710000000.0,"frame_number":42,"track_id":1,"bbox":[100,120,240,420],"confidence":0.91,"label":"human"}
 ```
 
 Only live, matched tracks are logged each frame. Lost tracks are retained internally for ID persistence but are not written as fresh detections.
@@ -204,11 +247,12 @@ Only live, matched tracks are logged each frame. Lost tracks are retained intern
 ## Troubleshooting Camera Issues
 
 - Run `rpicam-hello --list-cameras` to confirm the IMX708 is detected.
-- Set `camera.source: rpicam` in `config.yaml` if Picamera2 is unavailable but `rpicam-hello` works.
+- Set `camera.source: rpicam` in your local Pi config if Picamera2 is unavailable but `rpicam-hello` works.
 - Confirm the ribbon cable orientation and seating.
 - Use a recent Raspberry Pi OS 64-bit image.
 - Ensure no other process is using the camera.
-- Try a lower resolution/FPS in `config.yaml`.
+- Try a lower resolution/FPS in your local Pi config.
+- If the camera view feels too tight, try `1280x720` for 16:9 or `1024x768` for a taller 4:3 view before moving the camera.
 - If Picamera2 import fails, install `python3-picamera2` with apt rather than pip.
 - For development without camera hardware, use `--backend mock`; the app will fall back to synthetic frames.
 

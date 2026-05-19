@@ -58,6 +58,7 @@ class CpuDetector:
         import cv2
 
         self.confidence_threshold = confidence_threshold
+        self.max_inference_size = 640
         self._cv2 = cv2
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
@@ -66,15 +67,28 @@ class CpuDetector:
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
         cv2 = self._cv2
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        inference_frame, scale = self._resize_for_inference(frame)
+        gray = cv2.cvtColor(inference_frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.equalizeHist(gray)
         detections: list[Detection] = []
 
-        detections.extend(self._detect_hog(frame))
+        detections.extend(self._detect_hog(inference_frame))
         detections.extend(self._detect_cascade(gray, self._face, confidence=0.85))
 
         detections = [detection for detection in detections if detection.confidence >= self.confidence_threshold]
-        return _non_max_suppression(detections, iou_threshold=0.35)
+        detections = _non_max_suppression(detections, iou_threshold=0.35)
+        if scale == 1.0:
+            return detections
+        return [_scale_detection(detection, scale) for detection in detections]
+
+    def _resize_for_inference(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
+        height, width = frame.shape[:2]
+        largest_side = max(width, height)
+        if largest_side <= self.max_inference_size:
+            return frame, 1.0
+        scale = self.max_inference_size / float(largest_side)
+        resized = self._cv2.resize(frame, (int(width * scale), int(height * scale)), interpolation=self._cv2.INTER_AREA)
+        return resized, scale
 
     def _detect_hog(self, frame: np.ndarray) -> list[Detection]:
         rects, weights = self._hog.detectMultiScale(frame, winStride=(8, 8), padding=(16, 16), scale=1.05)
@@ -108,6 +122,17 @@ def _non_max_suppression(detections: list[Detection], iou_threshold: float) -> l
         if all(_iou(detection.bbox, other.bbox) < iou_threshold for other in selected):
             selected.append(detection)
     return selected
+
+
+def _scale_detection(detection: Detection, scale: float) -> Detection:
+    inverse = 1.0 / scale
+    x1, y1, x2, y2 = detection.bbox
+    return Detection(
+        bbox=(int(x1 * inverse), int(y1 * inverse), int(x2 * inverse), int(y2 * inverse)),
+        confidence=detection.confidence,
+        class_id=detection.class_id,
+        label=detection.label,
+    )
 
 
 def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
