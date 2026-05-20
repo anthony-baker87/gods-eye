@@ -179,7 +179,7 @@ def _parse_object_detect_udp_packet(packet: bytes) -> Detection | None:
         return None
     if width <= 0 or height <= 0 or not 0.0 <= confidence <= 1.0:
         return None
-    class_id = 0 if label in {"person", "human"} else -1
+    class_id = 0 if label in {"person", "human", "face"} else -1
     return Detection(
         bbox=(int(x), int(y), int(x + width), int(y + height)),
         confidence=confidence,

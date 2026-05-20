@@ -33,6 +33,20 @@ def test_parse_object_detect_udp_non_person_packet() -> None:
     assert detection.label == "airplane"
 
 
+def test_parse_object_detect_udp_face_counts_as_human() -> None:
+    packet = bytearray(280)
+    struct.pack_into("<Iiiii", packet, 0, 0xABCDEF01, 1, 2, 3, 4)
+    packet[20] = len("face")
+    packet[21:25] = b"face"
+    struct.pack_into("<f", packet, 276, 0.64)
+
+    detection = _parse_object_detect_udp_packet(bytes(packet))
+
+    assert detection is not None
+    assert detection.class_id == 0
+    assert detection.label == "human"
+
+
 def test_scale_udp_detection_to_frame_size() -> None:
     packet = bytearray(280)
     struct.pack_into("<Iiiii", packet, 0, 0xABCDEF01, 160, 160, 160, 160)
